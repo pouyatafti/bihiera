@@ -94,6 +94,8 @@ class MultiHiera:
     def get_tree(self,target_key,given_key_code_list,target_minimum_depth=0):
         collected_counts,N = self._collect(target_key,given_key_code_list)
         propagated_counts = self._propagate(target_key,collected_counts,target_minimum_depth)
+        # XXX hack for presentation
+        N0 = max(propagated_counts.values()) if propagated_counts.values() else 0
         return self._counts2tree(target_key,propagated_counts,N)
 
     # collect counts from the given_key_code hierarchy

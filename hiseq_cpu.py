@@ -2,7 +2,6 @@ import warnings
 
 import numpy as np
 from scipy import sparse
-import tensorflow as tf
 
 from functools import reduce
 from operator import mul
@@ -116,63 +115,23 @@ class HierarchicalCode:
 class HierarchicalSequenceEncoder:
     def __init__(self, symbols, sym2path_fun, path2sym_fun, **kwargs):
         self._hc = HierarchicalCode(symbols, sym2path_fun, path2sym_fun)
-        self._g = tf.Graph()
-        self._create_graph()
-        self._session = tf.Session(graph=self._g, **kwargs)
 
     def close(self):
         self._session.close()
 
-    def _create_graph(self):
+    def encode(self, seq):
         nnodes = len(self._hc.i2s)
         nleaves = len(self._hc.i_leaves)
-        # XXX this should be re-implemented with sparse matrices once support
-        # is added to TensorFlow
-        with self._g.as_default():
-            self._g_D = tf.constant(
-                self._hc.D.todense(),
-                dtype=tf.int32,
-                shape=(nnodes,nnodes)
-            )
-            self._g_T_from_leaves = tf.constant(
-                self._hc.T[self._hc.i_leaves,:].todense(),
-                dtype=tf.float32,
-                shape=(nleaves,nnodes)
-            )
-            self._g_T_to_leaves = tf.constant(
-                self._hc.T[:,self._hc.i_leaves].todense(),
-                dtype=tf.float32,
-                shape=(nnodes,nleaves)
-            )
 
-            # XXX tf.sparse_placeholder() is buggy and can't convert type of
-            # shape
-            self._g_x = tf.sparse_placeholder(
-                dtype=tf.int32
-                #shape=np.array((nnodes,1),dtype=np.int64)
-            )
+        i_seq = [self._hc.s2i[self._hc._s2s_fun(s)] for s in seq]
+        v_seq = [True]*len(seq)
 
-            self._g_x0 = tf.sparse_tensor_to_dense(self._g_x)
-            self._g_x1 = tf.matmul(self._g_D, self._g_x0,
-                a_is_sparse=True, b_is_sparse=True)
-            self._g_x2 = tf.logical_and(
-                (self._g_x0 > 0), (self._g_x1 <= 0)
-            )
-            self._g_x3 = tf.matmul(
-                tf.to_float(self._g_x2),
-                self._g_T_to_leaves,
-                transpose_a=True, a_is_sparse=True, b_is_sparse=True
-            )
-            self._g_x4 = tf.matmul(
-                self._g_x3,
-                self._g_T_from_leaves,
-                a_is_sparse=True, b_is_sparse=True
-            )
-            self._g_y = tf.clip_by_value(self._g_x4, 0., 1.)
-
-    def encode(self, seq):
-        i_seq = sorted([(self._hc.s2i[self._hc._s2s_fun(s)],0) for s in seq])
-        v_seq = [True]*len(i_seq)
-        shape=np.array((len(self._hc.i2s),1),dtype=np.int64)
-
-        return self._session.run(self._g_y, feed_dict={self._g_x: tf.SparseTensorValue(i_seq,v_seq,shape)}).T
+        x = sparse.csr_matrix((v_seq,(i_seq,[0]*len(seq))), shape=(nnodes,1))
+        x1 = self._hc.D.dot(x).astype("bool")
+        x2 = x.todok()
+        x2[x1] = False
+        x3 = self._hc.T[:,self._hc.i_leaves].T.dot(x2.tocsr())
+        y = self._hc.T[self._hc.i_leaves,:].T.dot(x3)
+        np.clip(y.data,0.,1.,out=y.data)
+        
+        return y
